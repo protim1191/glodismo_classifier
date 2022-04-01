@@ -5,7 +5,7 @@ Created on Mon Mar  7 09:52:57 2022
 @author: bhat_po
 """
 
-from data import MNISTWavelet, MNIST
+from data import MNIST, MNISTWavelet
 from recovery import NA_ALISTA, IHT
 import torch
 import torch.nn as nn
@@ -30,10 +30,10 @@ import os
 #   pd.DataFrame(test_logs).to_csv(name + "_test.csv", index=False)
 #   if train_logs:
 #     pd.DataFrame(train_logs).to_csv(name + "_train.csv", index=False)
-#%%
-class MNIST_CNN(nn.Module):
-    def __init__(self):
-        super(MNIST_CNN, self).__init__()
+#%% class fro classifier with recovery
+class MNIST_CNN_Recovery(nn.Module):
+    def __init__(self,batch_size):
+        super(MNIST_CNN_Recovery, self).__init__()
         self.conv1 = nn.Conv2d(1, 32, 3, 1)
         self.conv2 = nn.Conv2d(32, 64, 3, 1)
         self.dropout1 = nn.Dropout(0.25)
@@ -42,6 +42,7 @@ class MNIST_CNN(nn.Module):
         self.fc2 = nn.Linear(128, 10)
 
     def forward(self, x):
+        x = torch.reshape(x,(batch_size,1,28,28))
         x = self.conv1(x)
         x = F.relu(x)
         x = self.conv2(x)
@@ -55,8 +56,34 @@ class MNIST_CNN(nn.Module):
         x = self.fc2(x)
         output = F.log_softmax(x, dim=1)
         return output
-    #%%
+#%% class for classifier directly after sensor
+class MNIST_CNN_WO_Recovery(nn.Module):
+    def __init__(self, num_meas, batch_size):
+        super(MNIST_CNN_WO_Recovery, self).__init__()
+        self.fc0 = nn.Linear(num_meas,784)
+        self.conv1 = nn.Conv2d(1, 32, 3, 1)
+        self.conv2 = nn.Conv2d(32, 64, 3, 1)
+        self.dropout1 = nn.Dropout(0.25)
+        self.dropout2 = nn.Dropout(0.5)
+        self.fc1 = nn.Linear(9216, 128)
+        self.fc2 = nn.Linear(128, 10)
 
+    def forward(self, x):
+        x = self.fc0(x)
+        x = torch.reshape(x,(batch_size,1,28,28))
+        x = self.conv1(x)
+        x = F.relu(x)
+        x = self.conv2(x)
+        x = F.relu(x)
+        x = F.max_pool2d(x, 2)
+        x = self.dropout1(x)
+        x = torch.flatten(x, 1)
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.dropout2(x)
+        x = self.fc2(x)
+        output = F.log_softmax(x, dim=1)
+        return output
 
 #%%
 def train_epoch(sensing_matrix, recovery_model, pred_model , data, noise, use_median, n, positive_threshold, opt, use_mse, train_matrix):
@@ -69,8 +96,8 @@ def train_epoch(sensing_matrix, recovery_model, pred_model , data, noise, use_me
   train_classifier_loss = 0
   accuracy = 0
   
-  #for iteration, (X, target) in tqdm(enumerate(iter(data.train_loader))):
-  for iteration, (X, target) in enumerate(iter(data.train_loader)):
+  for iteration, (X, target) in tqdm(enumerate(iter(data.train_loader))):
+  #for iteration, (X, target) in enumerate(iter(data.train_loader)):
     X = X.to(device)
     target = target.to(device)
     opt.zero_grad()
@@ -107,7 +134,7 @@ def train_epoch(sensing_matrix, recovery_model, pred_model , data, noise, use_me
     # else:
     #   loss = (torch.abs(Xhat-X)).mean()
     
-    loss = F.nll_loss(classifier_output, target, reduction='sum').item()  # sum up batch loss
+    loss = F.nll_loss(classifier_output, target, reduction='sum')  # sum up batch loss
 
     loss.backward()
     opt.step()
@@ -116,7 +143,7 @@ def train_epoch(sensing_matrix, recovery_model, pred_model , data, noise, use_me
     # train_loss_l2 += ((Xhat-X)**2).mean().item()
     # train_normalizer_l1 += (torch.abs(X)).mean().item()
     # train_loss_l1 += torch.abs(Xhat - X).mean().item()
-    train_classifier_loss += loss/len(data.train_loader)
+    train_classifier_loss += loss/data.train_loader.batch_size
 
     # false_positives.append((detected_positives * (1 - true_positives)).float().mean().item())
     # false_negatives.append((true_positives * (1 - detected_positives)).float().mean().item())
@@ -130,7 +157,8 @@ def train_epoch(sensing_matrix, recovery_model, pred_model , data, noise, use_me
     # "train_nmae": 10 * np.log10(train_loss_l1 / train_normalizer_l1),
     # "train_false_positives": np.mean(false_positives),
     # "train_false_negatives": np.mean(false_negatives),
-    'train_accuracy': accuracy
+    'average_train_accuracy': accuracy/(len(data.train_loader)*data.train_loader.batch_size),
+    'average_classifier_loss': train_classifier_loss.item()/len(data.train_loader) 
   }
 #%%
 def run_experiment(
@@ -178,7 +206,7 @@ def run_experiment(
    data.train_data.reset()
    #test_metrics.append(test_epoch(test_model, sensing_matrix, data, noise, use_median, n, positive_threshold))
    # print("Epoch:", epoch+1, "Test NMSE:", test_metrics[-1]['test_nmse'],   "Test NMAE:", test_metrics[-1]['test_nmae'], "Train NMSE:", train_metrics[-1]['train_nmse'],  "Train NMAE:", train_metrics[-1]['train_nmae'])
-   print("Train Accuracy:", train_metrics[-1]['train_accuracy'])
+   print(f"Train Epoch: {epoch}, Train Accuracy: {train_metrics[-1]['average_train_accuracy']:.3f}, Classifier Loss: {train_metrics[-1]['average_classifier_loss']:.3f}")
 
   # return train_metrics, test_metrics
   return train_metrics
@@ -186,10 +214,15 @@ def run_experiment(
 if __name__=='__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(device)
+    
+    
     m = 28; n =28;   d =32; random_seed= 50; use_superpixel= 0; initial_scalar = 0.001
-    N = m*n
-    #data = MNISTWavelet()
+    N = m*n # total pixels in image
+    meas_per = 0.1 # percentage of measurements in terms of number of pixels,0.1 == 10%
+    num_meas = int(meas_per*N)
+   # data = MNISTWavelet()
     data = MNIST()
+    
     use_mse = 0
     train_matrix = 1
     use_median = 0
@@ -197,10 +230,13 @@ if __name__=='__main__':
     epochs = 250
     lr = 0.0002
     positive_threshold = 0.01
-    
-    sensing_matrix = Pixel(m, n, d, initial_scalar, random_seed, use_superpixel)
-    recovery_model = []
-    pred_model = MNIST_CNN()
+    s = 50
+    sensing_matrix = Pixel(num_meas, N, d, initial_scalar, random_seed, use_superpixel)
+    #recovery_model = []
+    recovery_model = IHT(15, s)
+    batch_size = data.train_loader.batch_size
+    #pred_model = MNIST_CNN_WO_Recovery(num_meas,batch_size)
+    pred_model = MNIST_CNN_Recovery(batch_size)
     
     run_experiment(
     N, # length of vectorized image
