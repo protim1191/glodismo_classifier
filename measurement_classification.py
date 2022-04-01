@@ -17,19 +17,19 @@ from noise import GaussianNoise, StudentNoise, Noiseless
 import numpy as np
 #from conf import device
 import matplotlib.pyplot as plt
-#import pandas as pd
+import pandas as pd
 from tqdm import tqdm
 import os
 #%%
-# def save_log(results, name):
-#   if len(results) == 2:
-#     train_logs, test_logs = results
-#   else:
-#     test_logs = results
-#     train_logs = False
-#   pd.DataFrame(test_logs).to_csv(name + "_test.csv", index=False)
-#   if train_logs:
-#     pd.DataFrame(train_logs).to_csv(name + "_train.csv", index=False)
+def save_log(results, name):
+  if len(results) == 2:
+    train_logs, test_logs = results
+  else:
+    test_logs = results
+    train_logs = False
+  pd.DataFrame(test_logs).to_csv(name + "_test.csv", index=False)
+  if train_logs:
+    pd.DataFrame(train_logs).to_csv(name + "_train.csv", index=False)
 #%% class fro classifier with recovery
 class MNIST_CNN_Recovery(nn.Module):
     def __init__(self,batch_size):
@@ -97,7 +97,7 @@ def train_epoch(sensing_matrix, recovery_model, pred_model , data, noise, use_me
   accuracy = 0
   
   for iteration, (X, target) in tqdm(enumerate(iter(data.train_loader))):
-  #for iteration, (X, target) in enumerate(iter(data.train_loader)):
+  
     X = X.to(device)
     target = target.to(device)
     opt.zero_grad()
@@ -223,6 +223,7 @@ if __name__=='__main__':
    # data = MNISTWavelet()
     data = MNIST()
     
+    use_recovery = 1
     use_mse = 0
     train_matrix = 1
     use_median = 0
@@ -232,25 +233,47 @@ if __name__=='__main__':
     positive_threshold = 0.01
     s = 50
     sensing_matrix = Pixel(num_meas, N, d, initial_scalar, random_seed, use_superpixel)
-    #recovery_model = []
-    recovery_model = IHT(15, s)
+    
     batch_size = data.train_loader.batch_size
-    #pred_model = MNIST_CNN_WO_Recovery(num_meas,batch_size)
-    pred_model = MNIST_CNN_Recovery(batch_size)
     
-    run_experiment(
-    N, # length of vectorized image
-    sensing_matrix,  
-    recovery_model, # recovery algorithm
-    pred_model, # classification model
-    data,
-    use_mse, # sort of redundant as we are using classification losses, e.g. cross entropy ...
-    train_matrix,
-    use_median,
-    noise,
-    epochs,
-    positive_threshold,
-    lr,
-    test_model=False,
-    )
+    if use_recovery:
+        recovery_model = IHT(15, s)
+        pred_model = MNIST_CNN_Recovery(batch_size)
+    else: 
+        recovery_model = []
+        pred_model = MNIST_CNN_WO_Recovery(num_meas,batch_size)
     
+    
+   
+    if recovery_model:
+        save_log(run_experiment(
+            N, # length of vectorized image
+            sensing_matrix,  
+            recovery_model, # recovery algorithm
+            pred_model, # classification model
+            data,
+            use_mse, # sort of redundant as we are using classification losses, e.g. cross entropy ...
+            train_matrix,
+            use_median,
+            noise,
+            epochs,
+            positive_threshold,
+            lr,
+            test_model=False,
+            ),"results/singlepixel_learned_recovery_classifier_"+data.name+"meas_"+str(num_meas))
+    else:
+        save_log(run_experiment(
+            N, # length of vectorized image
+            sensing_matrix,  
+            recovery_model, # recovery algorithm
+            pred_model, # classification model
+            data,
+            use_mse, # sort of redundant as we are using classification losses, e.g. cross entropy ...
+            train_matrix,
+            use_median,
+            noise,
+            epochs,
+            positive_threshold,
+            lr,
+            test_model=False,
+            ),"results/singlepixel_learned_no_recovery_classifier_"+data.name+"meas_"+str(num_meas))
