@@ -20,9 +20,9 @@ device = 'cpu'
 if torch.cuda.is_available():
     device = 'cuda'
 
-data_training = 1
+data_training = 1 # training = 1, test = 0
 
-use_adversarial =  0
+use_adversarial =  0 
 epsilon = 0.1
 
 dataset_preprocess = 'no_norm' # 'current_norm', 'mnist_norm', 'no_norm'
